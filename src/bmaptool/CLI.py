@@ -43,7 +43,7 @@ import subprocess
 import re
 import urllib.parse
 from typing import NamedTuple
-from . import BmapCreate, BmapCopy, BmapHelpers, TransRead
+from . import BmapCreate, BmapCopy, BmapHelpers, BmapSubrange, TransRead
 
 VERSION = "3.9.0"
 
@@ -800,6 +800,40 @@ def create_command(args):
         log.warning("was the image handled incorrectly and holes " "were expanded?")
 
 
+def subrange_command(args):
+    """Copy a byte-range subrange of a source file to a destination file.
+
+    Only byte ranges that are backed by data in the source file are written to
+    the destination; source holes are skipped, leaving corresponding destination
+    bytes unchanged.
+    """
+    try:
+        copier = BmapSubrange.BmapSubrange(
+            args.source, args.dest,
+            start=args.start,
+            length=args.length,
+            dest_seek=args.dest_seek,
+        )
+    except BmapSubrange.Error as err:
+        error_out(err)
+
+    log.info(
+        "copying %s from '%s' (offset %d) to '%s' (offset %d)"
+        % (
+            BmapHelpers.human_size(copier.length),
+            args.source, copier.start,
+            args.dest, copier.dest_seek,
+        )
+    )
+
+    try:
+        copier.copy()
+    except BmapSubrange.Error as err:
+        error_out(err)
+
+    log.info("done copying to '%s'" % args.dest)
+
+
 def parse_arguments():
     """A helper function which parses the input arguments."""
     text = sys.modules[__name__].__doc__
@@ -905,6 +939,46 @@ def parse_arguments():
     # The --removable-device option
     text = "copy on destination file only if it is a removable block device"
     parser_copy.add_argument("--removable-device", action="store_true", help=text)
+
+    #
+    # Create parser for the "subrange" command
+    #
+    text = (
+        "copy a byte-range subrange of a source file to a destination file, "
+        "recreating sparse holes from the source at their corresponding offsets "
+        "in the destination"
+    )
+    parser_subrange = subparsers.add_parser("subrange", help=text)
+    parser_subrange.set_defaults(func=subrange_command)
+
+    # Optional: start byte offset in the source
+    text = "byte offset in the source file at which to start copying (default: 0)"
+    parser_subrange.add_argument("--start", type=int, default=0, help=text)
+
+    # Optional: maximum length in bytes
+    text = (
+        "maximum number of bytes to copy; the actual number may be less if the "
+        "end of the source file is reached first (default: copy to end of source)"
+    )
+    parser_subrange.add_argument("--length", type=int, default=None, help=text)
+
+    # Optional: start byte offset in the destination
+    text = (
+        "byte offset in the destination file at which to start writing "
+        "(default: 0)"
+    )
+    parser_subrange.add_argument("--dest-seek", type=int, default=0, help=text)
+
+    # Positional: source file
+    text = "source file to read from"
+    parser_subrange.add_argument("source", help=text)
+
+    # Positional: destination file
+    text = (
+        "destination file to write to; created if it does not exist, "
+        "otherwise opened without truncation"
+    )
+    parser_subrange.add_argument("dest", help=text)
 
     return parser.parse_args()
 
